@@ -1,0 +1,23 @@
+{
+  "short_name": "KisanConnect",
+  "name": "KisanConnect - Farmer Equipment & Labor Sharing",
+  "description": "Connect farmers to share tractors, harvesters, seeders, and agricultural labor instantly.",
+  "icons": [
+    {
+      "src": "/pwa-192x192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "/pwa-512x512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#15803d",
+  "theme_color": "#15803d",
+  "display": "standalone",
+  "orientation": "portrait",
+  "categories": ["utilities", "business", "productivity"]
+}

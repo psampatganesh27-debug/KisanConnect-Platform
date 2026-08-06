@@ -1,0 +1,6 @@
+{
+  "name": "KisanConnect",
+  "description": "Mobile-first PWA for farmers to request and share agricultural equipment and labor.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

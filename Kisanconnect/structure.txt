@@ -1,0 +1,57 @@
+Folder PATH listing for volume Windows
+Volume serial number is 00000061 3CE8:85CD
+C:.
+¦   .env.example
+¦   .gitignore
+¦   bun.lock
+¦   index.html
+¦   kisanconnect.sqlite
+¦   main.py
+¦   metadata.json
+¦   ml_backend.py
+¦   package.json
+¦   README.md
+¦   server.ts
+¦   structure.txt
+¦   tsconfig.json
+¦   vite.config.ts
+¦   
++---assets
+¦   +---.aistudio
+¦           .gitignore
+¦           
++---public
+¦       manifest.json
+¦       sw.js
+¦       
++---server
+¦       db.ts
+¦       
++---src
+¦   ¦   App.tsx
+¦   ¦   index.css
+¦   ¦   main.tsx
+¦   ¦   translations.ts
+¦   ¦   types.ts
+¦   ¦   
+¦   +---components
+¦   ¦       AdminDashboard.tsx
+¦   ¦       AuthModal.tsx
+¦   ¦       BookingModal.tsx
+¦   ¦       DynamicListingModal.tsx
+¦   ¦       Header.tsx
+¦   ¦       HeroDashboard.tsx
+¦   ¦       MatchesSlideOver.tsx
+¦   ¦       PostListingModal.tsx
+¦   ¦       PostRequestModal.tsx
+¦   ¦       
+¦   +---context
+¦   ¦       LanguageContext.tsx
+¦   ¦       
+¦   +---utils
+¦           distance.ts
+¦           matchingService.ts
+¦           
++---__pycache__
+        main.cpython-310.pyc
+        
