@@ -15,7 +15,10 @@ import {
   AlertCircle,
   Tag,
   LogOut,
-  Lock
+  Lock,
+  User,
+  Key,
+  ArrowRight
 } from 'lucide-react';
 
 export interface AdminListing {
@@ -51,6 +54,7 @@ export const AdminDashboard: React.FC<Props> = ({ onGoBack }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   // Dashboard State
   const [metrics, setMetrics] = useState<AdminMetrics>({
@@ -112,6 +116,7 @@ export const AdminDashboard: React.FC<Props> = ({ onGoBack }) => {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
+    setIsLoggingIn(true);
     try {
       const res = await fetch('/api/admin/login', {
         method: 'POST',
@@ -126,6 +131,8 @@ export const AdminDashboard: React.FC<Props> = ({ onGoBack }) => {
       }
     } catch (err) {
       setLoginError('Server error. Please try again.');
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
@@ -185,71 +192,101 @@ export const AdminDashboard: React.FC<Props> = ({ onGoBack }) => {
     return (
       <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center">
         <RefreshCw className="w-6 h-6 animate-spin text-emerald-500 mr-2" />
-        <span className="text-slate-400 font-medium">Verifying Session...</span>
+        <span className="text-slate-400 font-medium">Verifying Secure Session...</span>
       </div>
     );
   }
 
   // =====================================
-  // RENDER: Login Screen
+  // RENDER: Login Screen (Upgraded UI)
   // =====================================
   if (isAuthenticated === false) {
     return (
-      <div className="min-h-[90vh] bg-slate-950 flex flex-col items-center justify-center px-4 font-sans relative">
+      <div className="min-h-[100dvh] bg-slate-950 flex flex-col items-center justify-center px-4 font-sans relative overflow-hidden">
+        
+        {/* Ambient Background Glow */}
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-emerald-900/20 rounded-full blur-[120px] pointer-events-none" />
+
+        {/* Back Button */}
         <button
           onClick={onGoBack}
-          className="absolute top-6 left-6 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 rounded-xl font-bold text-sm flex items-center gap-2 transition-all active:scale-95"
+          className="absolute top-6 left-6 px-4 py-2 bg-slate-900/80 backdrop-blur-md hover:bg-slate-800 text-slate-300 border border-slate-700/50 rounded-xl font-bold text-sm flex items-center gap-2 transition-all active:scale-95 z-20"
         >
           <ArrowLeft className="w-4 h-4 text-emerald-400" />
           Back to App
         </button>
 
-        <div className="bg-slate-900 border border-slate-800 p-8 rounded-2xl shadow-2xl max-w-sm w-full">
-          <div className="flex justify-center mb-4">
-            <div className="w-12 h-12 bg-emerald-950/50 rounded-xl flex items-center justify-center border border-emerald-900/50">
-              <Lock className="w-6 h-6 text-emerald-500" />
+        {/* Login Card */}
+        <div className="bg-slate-900/80 backdrop-blur-xl border border-slate-700/50 p-8 rounded-[2rem] shadow-2xl shadow-black/50 max-w-sm w-full relative z-10">
+          
+          {/* Icon Header */}
+          <div className="flex justify-center mb-6">
+            <div className="relative">
+              <div className="absolute inset-0 bg-emerald-500 rounded-2xl blur-lg opacity-20"></div>
+              <div className="w-16 h-16 bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl flex items-center justify-center border border-slate-700 relative shadow-inner">
+                <Lock className="w-7 h-7 text-emerald-400" />
+              </div>
             </div>
           </div>
+
           <div className="text-center mb-8">
-            <h2 className="text-2xl font-black text-white">Admin Access</h2>
-            <p className="text-sm text-slate-400 mt-1 font-medium">Restricted System Dashboard</p>
+            <h2 className="text-2xl font-black text-white tracking-tight">Admin Gateway</h2>
+            <p className="text-sm text-slate-400 mt-1.5 font-medium">Secure platform management</p>
           </div>
 
           {loginError && (
-            <div className="bg-rose-950/50 border border-rose-900/50 text-rose-400 p-3 rounded-xl text-xs font-bold mb-6 text-center flex items-center justify-center gap-2">
-              <AlertCircle className="w-4 h-4" />
+            <div className="bg-rose-950/50 border border-rose-900/50 text-rose-400 p-3 rounded-xl text-xs font-bold mb-6 text-center flex items-center justify-center gap-2 animate-in fade-in slide-in-from-top-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
               {loginError}
             </div>
           )}
 
-          <form onSubmit={handleLogin} className="space-y-5">
-            <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider mb-2">Username</label>
+          <form onSubmit={handleLogin} className="space-y-4">
+            
+            {/* Username Input */}
+            <div className="relative group">
+              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
+                <User className="w-4 h-4 text-slate-500 group-focus-within:text-emerald-400 transition-colors" />
+              </div>
               <input
                 type="text"
                 value={username}
                 onChange={e => setUsername(e.target.value)}
                 required
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-200 text-sm focus:outline-none focus:border-emerald-600 transition-colors"
-                placeholder="Enter admin username"
+                className="w-full bg-slate-950/50 border border-slate-700/50 rounded-xl pl-10 pr-4 py-3.5 text-slate-200 text-sm focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 transition-all placeholder:text-slate-600 font-medium"
+                placeholder="Username"
               />
             </div>
-            <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider mb-2">Password</label>
+
+            {/* Password Input */}
+            <div className="relative group">
+              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
+                <Key className="w-4 h-4 text-slate-500 group-focus-within:text-emerald-400 transition-colors" />
+              </div>
               <input
                 type="password"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 required
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-200 text-sm focus:outline-none focus:border-emerald-600 transition-colors"
-                placeholder="Enter admin password"
+                className="w-full bg-slate-950/50 border border-slate-700/50 rounded-xl pl-10 pr-4 py-3.5 text-slate-200 text-sm focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 transition-all placeholder:text-slate-600 font-medium"
+                placeholder="Password"
               />
             </div>
+
+            {/* Submit Button */}
             <button
               type="submit"
-              className="w-full bg-emerald-700 hover:bg-emerald-600 text-white font-bold py-3.5 rounded-xl transition-all active:scale-95 text-sm"
+              disabled={isLoggingIn}
+              className="w-full mt-2 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-bold py-3.5 rounded-xl transition-all active:scale-[0.98] disabled:opacity-70 disabled:active:scale-100 text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/20 group"
             >
-              Unlock Dashboard
+              {isLoggingIn ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <>
+                  Unlock Dashboard
+                  <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
+                </>
+              )}
             </button>
           </form>
         </div>
