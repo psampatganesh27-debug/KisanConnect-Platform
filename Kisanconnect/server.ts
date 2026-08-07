@@ -431,7 +431,6 @@ startServer();
 
 */
 
-
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { spawn } from 'child_process';
@@ -453,33 +452,36 @@ async function startServer() {
   // ADMIN AUTHENTICATION MIDDLEWARES
   // ==========================================
   
-  // Protects frontend HTML routes
-  const requireAdminPage = (req: any, res: any, next: any) => {
+  // Protects both page requests and API requests strictly via cookie
+  const verifyAdminSession = (req: any): boolean => {
     const adminSession = req.cookies?.admin_session;
-    if (adminSession && process.env.ADMIN_PASS && adminSession === process.env.ADMIN_PASS) {
+    return Boolean(adminSession && process.env.ADMIN_PASS && adminSession === process.env.ADMIN_PASS);
+  };
+
+  const requireAdminPage = (req: any, res: any, next: any) => {
+    if (verifyAdminSession(req)) {
       return next();
     }
     return res.redirect('/admin-login');
   };
 
-  // Protects backend API routes
   const requireAdminApi = (req: any, res: any, next: any) => {
-    const adminSession = req.cookies?.admin_session;
-    if (adminSession && process.env.ADMIN_PASS && adminSession === process.env.ADMIN_PASS) {
-      return next();
-    }
-    const referer = req.headers.referer || '';
-    if (referer.includes('/admin')) {
+    if (verifyAdminSession(req)) {
       return next();
     }
     return res.status(401).json({ error: 'Unauthorized access to Admin API' });
   };
 
   // ==========================================
-  // ADMIN LOGIN ROUTES
+  // ADMIN LOGIN & LOGOUT ROUTES
   // ==========================================
 
   app.get('/admin-login', (req: Request, res: Response) => {
+    // If already logged in, send straight to admin
+    if (verifyAdminSession(req)) {
+      return res.redirect('/admin');
+    }
+
     res.send(`
       <html>
         <head><title>Admin Login - KisanConnect</title></head>
@@ -512,6 +514,7 @@ async function startServer() {
       res.cookie('admin_session', process.env.ADMIN_PASS, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
         maxAge: 24 * 60 * 60 * 1000 
       });
       return res.redirect('/admin');
@@ -524,10 +527,6 @@ async function startServer() {
     res.clearCookie('admin_session');
     res.redirect('/admin-login');
   });
-
-  // Protect the frontend SPA '/admin' route
-  app.use('/admin', requireAdminPage);
-
 
   // ==========================================
   // PUBLIC API ROUTES
@@ -907,7 +906,6 @@ async function startServer() {
     }
 
     try {
-      // FIX: Dynamically read from the environment variable instead of hardcoding localhost
       const pythonApiUrl = process.env.PYTHON_API_URL || 'http://127.0.0.1:8000/match';
       
       const response = await fetch(pythonApiUrl, {
@@ -927,6 +925,16 @@ async function startServer() {
       console.error('Python ML matcher failed:', err.message);
       return res.status(500).json({ error: 'ML matching failed', details: err.message });
     }
+  });
+
+  // ==========================================
+  // EXPLICIT ADMIN SPA ROUTE PROTECTOR
+  // ==========================================
+
+  // Catch direct browser visits to /admin or /admin/* before SPA static files intercept it
+  app.get(['/admin', '/admin/*'], requireAdminPage, (req, res, next) => {
+    // If authenticated, let static file or SPA handler serve index.html
+    next();
   });
 
   // ==========================================
