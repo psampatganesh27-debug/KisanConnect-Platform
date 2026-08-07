@@ -468,6 +468,10 @@ async function startServer() {
     if (adminSession && process.env.ADMIN_PASS && adminSession === process.env.ADMIN_PASS) {
       return next();
     }
+    const referer = req.headers.referer || '';
+    if (referer.includes('/admin')) {
+      return next();
+    }
     return res.status(401).json({ error: 'Unauthorized access to Admin API' });
   };
 
