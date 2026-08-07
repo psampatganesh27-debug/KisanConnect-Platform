@@ -12,9 +12,10 @@ import {
   Phone, 
   MapPin, 
   Check, 
-  X,
   AlertCircle,
-  Tag
+  Tag,
+  LogOut,
+  Lock
 } from 'lucide-react';
 
 export interface AdminListing {
@@ -45,23 +46,42 @@ interface Props {
 }
 
 export const AdminDashboard: React.FC<Props> = ({ onGoBack }) => {
+  // Authentication State
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+
+  // Dashboard State
   const [metrics, setMetrics] = useState<AdminMetrics>({
     totalActiveListings: 0,
     totalResolvedRequests: 0,
     totalUsers: 0,
   });
-
   const [listings, setListings] = useState<AdminListing[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Filters
+  // Filters & Toggles
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<'All' | 'Have' | 'Need'>('All');
   const [filterStatus, setFilterStatus] = useState<'All' | 'Open' | 'Resolved'>('All');
-
-  // Updating status state
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+
+  // 1. Initial Auth Check
+  useEffect(() => {
+    fetch('/api/admin/check')
+      .then(res => res.json())
+      .then(data => setIsAuthenticated(data.authenticated))
+      .catch(() => setIsAuthenticated(false));
+  }, []);
+
+  // 2. Fetch Data ONLY if authenticated
+  useEffect(() => {
+    if (isAuthenticated) {
+      fetchData();
+    }
+  }, [isAuthenticated]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -82,86 +102,164 @@ export const AdminDashboard: React.FC<Props> = ({ onGoBack }) => {
       setMetrics(metricsData);
       setListings(listingsData);
     } catch (err: any) {
-      console.error(err);
       setError(err.message || 'Error fetching admin data');
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  // Login Handler
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError('');
+    try {
+      const res = await fetch('/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setIsAuthenticated(true);
+      } else {
+        setLoginError(data.error || 'Login failed');
+      }
+    } catch (err) {
+      setLoginError('Server error. Please try again.');
+    }
+  };
 
-  // Toggle status handler
+  // Logout Handler
+  const handleLogout = async () => {
+    await fetch('/api/admin/logout', { method: 'POST' });
+    setIsAuthenticated(false);
+    setUsername('');
+    setPassword('');
+  };
+
   const handleToggleStatus = async (item: AdminListing) => {
     const newStatus: 'Open' | 'Resolved' = item.status === 'Open' ? 'Resolved' : 'Open';
-    
     setUpdatingId(item.id);
 
-    // Optimistic update
-    setListings(prev =>
-      prev.map(l => (l.id === item.id ? { ...l, status: newStatus } : l))
-    );
-
-    // Update metrics optimistically
-    setMetrics(prev => {
-      const activeDelta = newStatus === 'Open' ? 1 : -1;
-      const resolvedDelta = newStatus === 'Resolved' ? 1 : -1;
-      return {
-        ...prev,
-        totalActiveListings: Math.max(0, prev.totalActiveListings + activeDelta),
-        totalResolvedRequests: Math.max(0, prev.totalResolvedRequests + resolvedDelta),
-      };
-    });
+    setListings(prev => prev.map(l => (l.id === item.id ? { ...l, status: newStatus } : l)));
+    setMetrics(prev => ({
+      ...prev,
+      totalActiveListings: Math.max(0, prev.totalActiveListings + (newStatus === 'Open' ? 1 : -1)),
+      totalResolvedRequests: Math.max(0, prev.totalResolvedRequests + (newStatus === 'Resolved' ? 1 : -1)),
+    }));
 
     try {
       const res = await fetch('/api/admin/listings/toggle-status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          kind: item.kind,
-          id: item.rawId,
-          status: newStatus,
-        }),
+        body: JSON.stringify({ kind: item.kind, id: item.rawId, status: newStatus }),
       });
-
-      if (!res.ok) {
-        throw new Error('Failed to update status on server');
-      }
+      if (!res.ok) throw new Error('Failed to update');
     } catch (err) {
-      console.error('Failed to toggle status:', err);
-      // Revert on error
-      fetchData();
+      fetchData(); // Revert on fail
     } finally {
       setUpdatingId(null);
     }
   };
 
-  // Filter listings
   const filteredListings = listings.filter(item => {
-    // Type filter
     if (filterType !== 'All' && item.type !== filterType) return false;
-
-    // Status filter
     if (filterStatus !== 'All' && item.status !== filterStatus) return false;
-
-    // Search query
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      const matchTitle = item.title.toLowerCase().includes(q);
-      const matchOwner = item.ownerName.toLowerCase().includes(q);
-      const matchPhone = item.ownerPhone.includes(q);
-      const matchVillage = item.village.toLowerCase().includes(q);
-      const matchCategory = item.category.toLowerCase().includes(q);
-      if (!matchTitle && !matchOwner && !matchPhone && !matchVillage && !matchCategory) {
-        return false;
-      }
+      return (
+        item.title.toLowerCase().includes(q) ||
+        item.ownerName.toLowerCase().includes(q) ||
+        item.ownerPhone.includes(q) ||
+        item.village.toLowerCase().includes(q) ||
+        item.category.toLowerCase().includes(q)
+      );
     }
-
     return true;
   });
 
+  // =====================================
+  // RENDER: Loading State
+  // =====================================
+  if (isAuthenticated === null) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center">
+        <RefreshCw className="w-6 h-6 animate-spin text-emerald-500 mr-2" />
+        <span className="text-slate-400 font-medium">Verifying Session...</span>
+      </div>
+    );
+  }
+
+  // =====================================
+  // RENDER: Login Screen
+  // =====================================
+  if (isAuthenticated === false) {
+    return (
+      <div className="min-h-[90vh] bg-slate-950 flex flex-col items-center justify-center px-4 font-sans relative">
+        <button
+          onClick={onGoBack}
+          className="absolute top-6 left-6 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 rounded-xl font-bold text-sm flex items-center gap-2 transition-all active:scale-95"
+        >
+          <ArrowLeft className="w-4 h-4 text-emerald-400" />
+          Back to App
+        </button>
+
+        <div className="bg-slate-900 border border-slate-800 p-8 rounded-2xl shadow-2xl max-w-sm w-full">
+          <div className="flex justify-center mb-4">
+            <div className="w-12 h-12 bg-emerald-950/50 rounded-xl flex items-center justify-center border border-emerald-900/50">
+              <Lock className="w-6 h-6 text-emerald-500" />
+            </div>
+          </div>
+          <div className="text-center mb-8">
+            <h2 className="text-2xl font-black text-white">Admin Access</h2>
+            <p className="text-sm text-slate-400 mt-1 font-medium">Restricted System Dashboard</p>
+          </div>
+
+          {loginError && (
+            <div className="bg-rose-950/50 border border-rose-900/50 text-rose-400 p-3 rounded-xl text-xs font-bold mb-6 text-center flex items-center justify-center gap-2">
+              <AlertCircle className="w-4 h-4" />
+              {loginError}
+            </div>
+          )}
+
+          <form onSubmit={handleLogin} className="space-y-5">
+            <div>
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider mb-2">Username</label>
+              <input
+                type="text"
+                value={username}
+                onChange={e => setUsername(e.target.value)}
+                required
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-200 text-sm focus:outline-none focus:border-emerald-600 transition-colors"
+                placeholder="Enter admin username"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider mb-2">Password</label>
+              <input
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                required
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-200 text-sm focus:outline-none focus:border-emerald-600 transition-colors"
+                placeholder="Enter admin password"
+              />
+            </div>
+            <button
+              type="submit"
+              className="w-full bg-emerald-700 hover:bg-emerald-600 text-white font-bold py-3.5 rounded-xl transition-all active:scale-95 text-sm"
+            >
+              Unlock Dashboard
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  // =====================================
+  // RENDER: Admin Dashboard
+  // =====================================
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans w-full max-w-full overflow-x-hidden">
       
@@ -175,7 +273,7 @@ export const AdminDashboard: React.FC<Props> = ({ onGoBack }) => {
               className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all active:scale-95"
             >
               <ArrowLeft className="w-4 h-4 text-emerald-400" />
-              <span>Back to App</span>
+              <span className="hidden sm:inline">Back to App</span>
             </button>
 
             <div className="flex items-center gap-2">
@@ -184,26 +282,33 @@ export const AdminDashboard: React.FC<Props> = ({ onGoBack }) => {
               </div>
               <div>
                 <h1 className="text-base sm:text-lg font-black text-white leading-none flex items-center gap-2">
-                  KisanConnect Admin Panel
-                  <span className="px-2 py-0.5 bg-emerald-950 text-emerald-400 text-[10px] font-mono font-bold rounded-full border border-emerald-800">
+                  Admin Panel
+                  <span className="hidden sm:inline px-2 py-0.5 bg-emerald-950 text-emerald-400 text-[10px] font-mono font-bold rounded-full border border-emerald-800">
                     System Monitor
                   </span>
                 </h1>
-                <p className="text-[11px] text-slate-400 font-medium">
-                  Live platform metrics & listing state manager
-                </p>
               </div>
             </div>
           </div>
 
-          <button
-            onClick={fetchData}
-            disabled={loading}
-            className="px-3 py-1.5 bg-emerald-900 hover:bg-emerald-800 text-emerald-200 border border-emerald-700 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all active:scale-95 disabled:opacity-50"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            <span className="hidden sm:inline">Refresh Data</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={fetchData}
+              disabled={loading}
+              className="px-3 py-1.5 bg-emerald-900 hover:bg-emerald-800 text-emerald-200 border border-emerald-700 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all active:scale-95 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">Refresh Data</span>
+            </button>
+            
+            <button
+              onClick={handleLogout}
+              className="px-3 py-1.5 bg-rose-950/50 hover:bg-rose-900/50 text-rose-400 border border-rose-900/50 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all active:scale-95"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Logout</span>
+            </button>
+          </div>
 
         </div>
       </header>
@@ -211,69 +316,42 @@ export const AdminDashboard: React.FC<Props> = ({ onGoBack }) => {
       {/* Main Content Area */}
       <main className="max-w-6xl mx-auto px-3 sm:px-6 py-6 w-full flex-1 space-y-6">
         
-        {/* Requirement 3: Top-Level Summary Metric Cards */}
+        {/* Metric Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          
-          {/* Metric 1: Total Active Listings */}
           <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-lg flex items-center justify-between">
             <div>
-              <p className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
-                Total Active Listings
-              </p>
-              <h2 className="text-2xl sm:text-3xl font-black text-white font-mono mt-1">
-                {loading ? '...' : metrics.totalActiveListings}
-              </h2>
-              <p className="text-[11px] text-emerald-400 font-medium mt-1 flex items-center gap-1">
-                <Activity className="w-3 h-3" />
-                Live on village feed
-              </p>
+              <p className="text-xs font-extrabold uppercase tracking-wider text-slate-400">Total Active Listings</p>
+              <h2 className="text-2xl sm:text-3xl font-black text-white font-mono mt-1">{loading ? '...' : metrics.totalActiveListings}</h2>
+              <p className="text-[11px] text-emerald-400 font-medium mt-1 flex items-center gap-1"><Activity className="w-3 h-3" /> Live on village feed</p>
             </div>
             <div className="w-12 h-12 rounded-2xl bg-emerald-950 text-emerald-400 border border-emerald-800 flex items-center justify-center shrink-0">
               <Tractor className="w-6 h-6 stroke-[2.2]" />
             </div>
           </div>
 
-          {/* Metric 2: Total Resolved Requests */}
           <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-lg flex items-center justify-between">
             <div>
-              <p className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
-                Total Resolved Requests
-              </p>
-              <h2 className="text-2xl sm:text-3xl font-black text-white font-mono mt-1">
-                {loading ? '...' : metrics.totalResolvedRequests}
-              </h2>
-              <p className="text-[11px] text-amber-400 font-medium mt-1 flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" />
-                Fulfilled or closed
-              </p>
+              <p className="text-xs font-extrabold uppercase tracking-wider text-slate-400">Total Resolved Requests</p>
+              <h2 className="text-2xl sm:text-3xl font-black text-white font-mono mt-1">{loading ? '...' : metrics.totalResolvedRequests}</h2>
+              <p className="text-[11px] text-amber-400 font-medium mt-1 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Fulfilled or closed</p>
             </div>
             <div className="w-12 h-12 rounded-2xl bg-amber-950 text-amber-400 border border-amber-800 flex items-center justify-center shrink-0">
               <CheckCircle2 className="w-6 h-6 stroke-[2.2]" />
             </div>
           </div>
 
-          {/* Metric 3: Total System Users */}
           <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-lg flex items-center justify-between">
             <div>
-              <p className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
-                Total System Users
-              </p>
-              <h2 className="text-2xl sm:text-3xl font-black text-white font-mono mt-1">
-                {loading ? '...' : metrics.totalUsers}
-              </h2>
-              <p className="text-[11px] text-blue-400 font-medium mt-1 flex items-center gap-1">
-                <Users className="w-3 h-3" />
-                Registered phone accounts
-              </p>
+              <p className="text-xs font-extrabold uppercase tracking-wider text-slate-400">Total System Users</p>
+              <h2 className="text-2xl sm:text-3xl font-black text-white font-mono mt-1">{loading ? '...' : metrics.totalUsers}</h2>
+              <p className="text-[11px] text-blue-400 font-medium mt-1 flex items-center gap-1"><Users className="w-3 h-3" /> Registered phone accounts</p>
             </div>
             <div className="w-12 h-12 rounded-2xl bg-blue-950 text-blue-400 border border-blue-800 flex items-center justify-center shrink-0">
               <Users className="w-6 h-6 stroke-[2.2]" />
             </div>
           </div>
-
         </div>
 
-        {/* Error Alert */}
         {error && (
           <div className="p-4 bg-rose-950/90 border border-rose-800 rounded-2xl text-rose-200 text-xs font-bold flex items-center gap-2">
             <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
@@ -283,19 +361,13 @@ export const AdminDashboard: React.FC<Props> = ({ onGoBack }) => {
 
         {/* Data Table Section */}
         <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-lg space-y-4">
-          
-          {/* Table Header Controls: Search & Filters */}
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
             <div>
               <h2 className="text-base font-black text-white">System Listings Database</h2>
-              <p className="text-xs text-slate-400 font-medium">
-                Showing {filteredListings.length} of {listings.length} total entries
-              </p>
+              <p className="text-xs text-slate-400 font-medium">Showing {filteredListings.length} of {listings.length} total entries</p>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              
-              {/* Search Bar */}
               <div className="relative min-w-[200px] flex-1 sm:flex-initial">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                 <input
@@ -307,47 +379,34 @@ export const AdminDashboard: React.FC<Props> = ({ onGoBack }) => {
                 />
               </div>
 
-              {/* Type Filter */}
               <div className="flex items-center gap-1 bg-slate-900 p-1 border border-slate-700 rounded-xl text-xs font-bold">
                 {(['All', 'Have', 'Need'] as const).map(t => (
                   <button
                     key={t}
                     onClick={() => setFilterType(t)}
-                    className={`px-2.5 py-1 rounded-lg transition-all ${
-                      filterType === t 
-                        ? 'bg-emerald-800 text-white shadow-xs' 
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
+                    className={`px-2.5 py-1 rounded-lg transition-all ${filterType === t ? 'bg-emerald-800 text-white shadow-xs' : 'text-slate-400 hover:text-slate-200'}`}
                   >
                     {t === 'All' ? 'All Types' : t === 'Have' ? 'Have (Equip)' : 'Need (Req)'}
                   </button>
                 ))}
               </div>
 
-              {/* Status Filter */}
               <div className="flex items-center gap-1 bg-slate-900 p-1 border border-slate-700 rounded-xl text-xs font-bold">
                 {(['All', 'Open', 'Resolved'] as const).map(s => (
                   <button
                     key={s}
                     onClick={() => setFilterStatus(s)}
-                    className={`px-2.5 py-1 rounded-lg transition-all ${
-                      filterStatus === s 
-                        ? 'bg-emerald-800 text-white shadow-xs' 
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
+                    className={`px-2.5 py-1 rounded-lg transition-all ${filterStatus === s ? 'bg-emerald-800 text-white shadow-xs' : 'text-slate-400 hover:text-slate-200'}`}
                   >
                     {s}
                   </button>
                 ))}
               </div>
-
             </div>
           </div>
 
-          {/* Data Table */}
           <div className="overflow-x-auto rounded-xl border border-slate-800">
             <table className="w-full text-left border-collapse text-xs">
-              
               <thead className="bg-slate-900/90 text-slate-300 uppercase font-black tracking-wider text-[10px] border-b border-slate-800">
                 <tr>
                   <th className="py-3 px-3.5">Type & ID</th>
@@ -359,7 +418,6 @@ export const AdminDashboard: React.FC<Props> = ({ onGoBack }) => {
                   <th className="py-3 px-3.5 text-right">Action State</th>
                 </tr>
               </thead>
-
               <tbody className="divide-y divide-slate-800 text-slate-200 font-medium">
                 {loading ? (
                   <tr>
@@ -370,129 +428,62 @@ export const AdminDashboard: React.FC<Props> = ({ onGoBack }) => {
                   </tr>
                 ) : filteredListings.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="py-12 text-center text-slate-500 font-bold">
-                      No listings found matching filters.
-                    </td>
+                    <td colSpan={7} className="py-12 text-center text-slate-500 font-bold">No listings found matching filters.</td>
                   </tr>
                 ) : (
                   filteredListings.map(item => {
                     const isOpen = item.status === 'Open';
                     const isUpdating = updatingId === item.id;
-
                     return (
                       <tr key={item.id} className="hover:bg-slate-900/60 transition-colors">
-                        
-                        {/* Type & ID */}
                         <td className="py-3 px-3.5 whitespace-nowrap">
                           <div className="flex items-center gap-1.5">
-                            <span className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase border ${
-                              item.type === 'Have'
-                                ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
-                                : 'bg-amber-950 text-amber-300 border-amber-800'
-                            }`}>
-                              {item.type}
-                            </span>
-                            <span className="font-mono text-[11px] text-slate-400">
-                              #{item.id}
-                            </span>
+                            <span className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase border ${item.type === 'Have' ? 'bg-emerald-950 text-emerald-300 border-emerald-800' : 'bg-amber-950 text-amber-300 border-amber-800'}`}>{item.type}</span>
+                            <span className="font-mono text-[11px] text-slate-400">#{item.id}</span>
                           </div>
                         </td>
-
-                        {/* Title & Category */}
                         <td className="py-3 px-3.5 max-w-xs">
-                          <p className="font-bold text-white text-xs line-clamp-1">
-                            {item.title}
-                          </p>
-                          <span className="inline-flex items-center gap-1 text-[10px] text-slate-400 font-mono mt-0.5">
-                            <Tag className="w-3 h-3 text-slate-500" />
-                            {item.category}
-                          </span>
+                          <p className="font-bold text-white text-xs line-clamp-1">{item.title}</p>
+                          <span className="inline-flex items-center gap-1 text-[10px] text-slate-400 font-mono mt-0.5"><Tag className="w-3 h-3 text-slate-500" /> {item.category}</span>
                         </td>
-
-                        {/* Owner / User */}
                         <td className="py-3 px-3.5 whitespace-nowrap">
                           <p className="font-bold text-slate-200">{item.ownerName}</p>
-                          <p className="text-[11px] text-slate-400 font-mono flex items-center gap-1">
-                            <Phone className="w-3 h-3 text-emerald-400" />
-                            {item.ownerPhone}
-                          </p>
+                          <p className="text-[11px] text-slate-400 font-mono flex items-center gap-1"><Phone className="w-3 h-3 text-emerald-400" /> {item.ownerPhone}</p>
                         </td>
-
-                        {/* Location */}
                         <td className="py-3 px-3.5 whitespace-nowrap">
-                          <span className="flex items-center gap-1 text-slate-300">
-                            <MapPin className="w-3 h-3 text-emerald-400 shrink-0" />
-                            {item.village}, {item.district}
-                          </span>
+                          <span className="flex items-center gap-1 text-slate-300"><MapPin className="w-3 h-3 text-emerald-400 shrink-0" /> {item.village}, {item.district}</span>
                         </td>
-
-                        {/* Price / Rate */}
                         <td className="py-3 px-3.5 whitespace-nowrap">
-                          <span className="font-black font-mono text-emerald-300 text-xs">
-                            ₹{item.rate}
-                          </span>
-                          <span className="text-[10px] text-slate-400 ml-1">
-                            /{item.unitType}
-                          </span>
+                          <span className="font-black font-mono text-emerald-300 text-xs">₹{item.rate}</span>
+                          <span className="text-[10px] text-slate-400 ml-1">/{item.unitType}</span>
                         </td>
-
-                        {/* Status Badge */}
                         <td className="py-3 px-3.5 whitespace-nowrap">
-                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold flex items-center gap-1.5 w-fit border ${
-                            isOpen 
-                              ? 'bg-emerald-950/80 text-emerald-300 border-emerald-700' 
-                              : 'bg-slate-800 text-slate-400 border-slate-700'
-                          }`}>
-                            <span className={`w-1.5 h-1.5 rounded-full ${isOpen ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
-                            {item.status}
+                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold flex items-center gap-1.5 w-fit border ${isOpen ? 'bg-emerald-950/80 text-emerald-300 border-emerald-700' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${isOpen ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} /> {item.status}
                           </span>
                         </td>
-
-                        {/* Requirement 2: Admin Toggle Switch (Open <-> Resolved) */}
                         <td className="py-3 px-3.5 whitespace-nowrap text-right">
                           <button
                             onClick={() => handleToggleStatus(item)}
                             disabled={isUpdating}
-                            className={`min-h-[34px] px-3 py-1 rounded-xl text-xs font-bold border transition-all active:scale-95 flex items-center gap-1.5 ml-auto ${
-                              isOpen
-                                ? 'bg-amber-950/80 hover:bg-amber-900 text-amber-200 border-amber-700/80'
-                                : 'bg-emerald-950/80 hover:bg-emerald-900 text-emerald-200 border-emerald-700/80'
-                            }`}
+                            className={`min-h-[34px] px-3 py-1 rounded-xl text-xs font-bold border transition-all active:scale-95 flex items-center gap-1.5 ml-auto ${isOpen ? 'bg-amber-950/80 hover:bg-amber-900 text-amber-200 border-amber-700/80' : 'bg-emerald-950/80 hover:bg-emerald-900 text-emerald-200 border-emerald-700/80'}`}
                           >
-                            {isUpdating ? (
-                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                            ) : isOpen ? (
-                              <>
-                                <Check className="w-3.5 h-3.5 text-amber-400" />
-                                <span>Mark Resolved</span>
-                              </>
-                            ) : (
-                              <>
-                                <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />
-                                <span>Re-Open</span>
-                              </>
-                            )}
+                            {isUpdating ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : isOpen ? <><Check className="w-3.5 h-3.5 text-amber-400" /><span>Mark Resolved</span></> : <><RefreshCw className="w-3.5 h-3.5 text-emerald-400" /><span>Re-Open</span></>}
                           </button>
                         </td>
-
                       </tr>
                     );
                   })
                 )}
               </tbody>
-
             </table>
           </div>
-
         </div>
-
       </main>
 
-      {/* Admin Footer */}
       <footer className="border-t border-slate-800 bg-slate-950 py-4 px-4 text-center text-xs text-slate-500 font-semibold">
         KisanConnect Administrative Monitoring Engine • Internal System Dashboard
       </footer>
-
     </div>
   );
 };

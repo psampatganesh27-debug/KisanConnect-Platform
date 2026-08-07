@@ -443,67 +443,33 @@ async function startServer() {
   const PORT = 3000;
 
   app.use(express.json());
-  app.use(cookieParser() as any); // Required for reading the admin session cookie
+  app.use(cookieParser() as any); 
 
-  // Initialize PostgreSQL database connection
   await getDb();
 
   // ==========================================
-  // ADMIN AUTHENTICATION MIDDLEWARES
+  // ADMIN AUTHENTICATION API
   // ==========================================
   
-  // Protects both page requests and API requests strictly via cookie
-  const verifyAdminSession = (req: any): boolean => {
+  const isAdminAuthenticated = (req: any): boolean => {
     const adminSession = req.cookies?.admin_session;
     return Boolean(adminSession && process.env.ADMIN_PASS && adminSession === process.env.ADMIN_PASS);
   };
 
-  const requireAdminPage = (req: any, res: any, next: any) => {
-    if (verifyAdminSession(req)) {
-      return next();
-    }
-    return res.redirect('/admin-login');
-  };
-
   const requireAdminApi = (req: any, res: any, next: any) => {
-    if (verifyAdminSession(req)) {
+    if (isAdminAuthenticated(req)) {
       return next();
     }
     return res.status(401).json({ error: 'Unauthorized access to Admin API' });
   };
 
-  // ==========================================
-  // ADMIN LOGIN & LOGOUT ROUTES
-  // ==========================================
-
-  app.get('/admin-login', (req: Request, res: Response) => {
-    // If already logged in, send straight to admin
-    if (verifyAdminSession(req)) {
-      return res.redirect('/admin');
-    }
-
-    res.send(`
-      <html>
-        <head><title>Admin Login - KisanConnect</title></head>
-        <body style="font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f4f6f8;">
-          <form method="POST" action="/admin-login" style="background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); width: 300px;">
-            <h2 style="margin-bottom: 20px; color: #2d3748; text-align: center;">Admin Access</h2>
-            <div style="margin-bottom: 15px;">
-              <label style="display: block; margin-bottom: 5px; color: #4a5568;">Username</label>
-              <input type="text" name="username" required style="width: 100%; padding: 8px; border: 1px solid #cbd5e0; border-radius: 4px; box-sizing: border-box;" />
-            </div>
-            <div style="margin-bottom: 20px;">
-              <label style="display: block; margin-bottom: 5px; color: #4a5568;">Password</label>
-              <input type="password" name="password" required style="width: 100%; padding: 8px; border: 1px solid #cbd5e0; border-radius: 4px; box-sizing: border-box;" />
-            </div>
-            <button type="submit" style="width: 100%; background: #319795; color: white; padding: 10px; border: none; border-radius: 4px; font-weight: bold; cursor: pointer;">Login</button>
-          </form>
-        </body>
-      </html>
-    `);
+  // 1. Check Auth Status (Used by React on mount)
+  app.get('/api/admin/check', (req, res) => {
+    return res.json({ authenticated: isAdminAuthenticated(req) });
   });
 
-  app.post('/admin-login', express.urlencoded({ extended: true }), (req: Request, res: Response) => {
+  // 2. Login Endpoint
+  app.post('/api/admin/login', express.json(), (req: Request, res: Response) => {
     const { username, password } = req.body;
 
     if (
@@ -517,314 +483,155 @@ async function startServer() {
         sameSite: 'lax',
         maxAge: 24 * 60 * 60 * 1000 
       });
-      return res.redirect('/admin');
+      return res.json({ success: true });
     }
 
-    res.send("<script>alert('Invalid Credentials'); window.location.href='/admin-login';</script>");
+    return res.status(401).json({ error: 'Invalid Admin Credentials' });
   });
 
-  app.get('/admin-logout', (req: Request, res: Response) => {
+  // 3. Logout Endpoint
+  app.post('/api/admin/logout', (req, res) => {
     res.clearCookie('admin_session');
-    res.redirect('/admin-login');
+    return res.json({ success: true });
   });
 
   // ==========================================
   // PUBLIC API ROUTES
   // ==========================================
   
-  // 1. Auth Login (Mobile + 4-digit PIN)
   app.post('/api/auth/login', async (req, res) => {
     const { phone, pin } = req.body;
-    if (!phone || !pin) {
-      return res.status(400).json({ error: 'Mobile number and PIN are required' });
-    }
-
-    const cleanPhone = String(phone).trim();
-    const cleanPin = String(pin).trim();
-
-    const user = await dbQueryOne('SELECT id, phone, name, village, district FROM users WHERE phone = $1 AND pin = $2', [cleanPhone, cleanPin]);
-
-    if (!user) {
-      return res.status(401).json({ error: 'Invalid mobile number or 4-digit PIN' });
-    }
-
+    if (!phone || !pin) return res.status(400).json({ error: 'Mobile number and PIN are required' });
+    const user = await dbQueryOne('SELECT id, phone, name, village, district FROM users WHERE phone = $1 AND pin = $2', [String(phone).trim(), String(pin).trim()]);
+    if (!user) return res.status(401).json({ error: 'Invalid mobile number or 4-digit PIN' });
     return res.json({ success: true, user });
   });
 
-  // 2. Auth Register
   app.post('/api/auth/register', async (req, res) => {
     const { phone, pin, name, village, district } = req.body;
-    if (!phone || !pin || !name || !village) {
-      return res.status(400).json({ error: 'Mobile number, PIN, name, and village are required' });
-    }
-
-    const cleanPhone = String(phone).trim();
-    const cleanPin = String(pin).trim();
-    const cleanName = String(name).trim();
-    const cleanVillage = String(village).trim();
-    const cleanDistrict = String(district || 'Central District').trim();
-
-    const existing = await dbQueryOne('SELECT id FROM users WHERE phone = $1', [cleanPhone]);
-    if (existing) {
-      return res.status(400).json({ error: 'An account with this mobile number already exists' });
-    }
+    if (!phone || !pin || !name || !village) return res.status(400).json({ error: 'Missing fields' });
+    
+    const existing = await dbQueryOne('SELECT id FROM users WHERE phone = $1', [String(phone).trim()]);
+    if (existing) return res.status(400).json({ error: 'Account exists' });
 
     try {
       await dbExec('INSERT INTO users (phone, pin, name, village, district) VALUES ($1, $2, $3, $4, $5)', [
-        cleanPhone, cleanPin, cleanName, cleanVillage, cleanDistrict
+        String(phone).trim(), String(pin).trim(), String(name).trim(), String(village).trim(), String(district || 'Central District').trim()
       ]);
-
-      const newUser = await dbQueryOne('SELECT id, phone, name, village, district FROM users WHERE phone = $1', [cleanPhone]);
+      const newUser = await dbQueryOne('SELECT id, phone, name, village, district FROM users WHERE phone = $1', [String(phone).trim()]);
       return res.json({ success: true, user: newUser });
     } catch (err: any) {
-      return res.status(500).json({ error: err.message || 'Failed to create user' });
+      return res.status(500).json({ error: err.message });
     }
   });
 
-  // 3. Equipment Listings (GET)
   app.get('/api/equipment', async (req, res) => {
     const category = req.query.category as string;
     const search = req.query.search as string;
-
     let sql = 'SELECT * FROM equipment_listings WHERE is_available = 1';
     const params: any[] = [];
     let paramIndex = 1;
-
-    if (category && category !== 'all') {
-      sql += ` AND category = $${paramIndex++}`;
-      params.push(category);
-    }
-
+    if (category && category !== 'all') { sql += ` AND category = $${paramIndex++}`; params.push(category); }
     if (search) {
       const term = `%${search}%`;
       sql += ` AND (title LIKE $${paramIndex++} OR village LIKE $${paramIndex++} OR district LIKE $${paramIndex++} OR owner_name LIKE $${paramIndex++})`;
       params.push(term, term, term, term);
     }
-
     sql += ' ORDER BY id DESC';
-
-    try {
-      const listings = await dbQueryAll(sql, params);
-      return res.json(listings);
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message || 'Failed to fetch equipment' });
-    }
+    try { return res.json(await dbQueryAll(sql, params)); } 
+    catch (err: any) { return res.status(500).json({ error: err.message }); }
   });
 
-  // 4. Equipment Listing Create (POST)
   app.post('/api/equipment', async (req, res) => {
     const { userId, ownerName, ownerPhone, category, title, description, ratePerUnit, unitType, village, district } = req.body;
-
-    if (!ownerName || !ownerPhone || !category || !title || !unitType || !village) {
-      return res.status(400).json({ error: 'Missing required listing details' });
-    }
-
     try {
       await dbExec(
-        `INSERT INTO equipment_listings 
-        (user_id, owner_name, owner_phone, category, title, description, rate_per_unit, unit_type, village, district, is_available)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1)`,
-        [
-          userId || 1,
-          String(ownerName).trim(),
-          String(ownerPhone).trim(),
-          String(category).trim(),
-          String(title).trim(),
-          String(description || '').trim(),
-          Number(ratePerUnit || 0),
-          String(unitType).trim(),
-          String(village).trim(),
-          String(district || 'Local District').trim()
-        ]
+        `INSERT INTO equipment_listings (user_id, owner_name, owner_phone, category, title, description, rate_per_unit, unit_type, village, district, is_available) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1)`,
+        [userId || 1, String(ownerName).trim(), String(ownerPhone).trim(), String(category).trim(), String(title).trim(), String(description || '').trim(), Number(ratePerUnit || 0), String(unitType).trim(), String(village).trim(), String(district || 'Local').trim()]
       );
-
-      return res.json({ success: true, message: 'Equipment listing published successfully!' });
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message || 'Failed to create listing' });
-    }
+      return res.json({ success: true });
+    } catch (err: any) { return res.status(500).json({ error: err.message }); }
   });
 
-  // 5. Labor / Equipment Requests (GET)
   app.get('/api/requests', async (req, res) => {
     const category = req.query.category as string;
     const search = req.query.search as string;
-
     let sql = "SELECT * FROM labor_requests WHERE status = 'open'";
     const params: any[] = [];
     let paramIndex = 1;
-
-    if (category && category !== 'all') {
-      sql += ` AND category = $${paramIndex++}`;
-      params.push(category);
-    }
-
+    if (category && category !== 'all') { sql += ` AND category = $${paramIndex++}`; params.push(category); }
     if (search) {
       const term = `%${search}%`;
       sql += ` AND (title LIKE $${paramIndex++} OR village LIKE $${paramIndex++} OR district LIKE $${paramIndex++} OR requester_name LIKE $${paramIndex++})`;
       params.push(term, term, term, term);
     }
-
     sql += ' ORDER BY id DESC';
-
-    try {
-      const requests = await dbQueryAll(sql, params);
-      return res.json(requests);
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message || 'Failed to fetch requests' });
-    }
+    try { return res.json(await dbQueryAll(sql, params)); } 
+    catch (err: any) { return res.status(500).json({ error: err.message }); }
   });
 
-  // 6. Request Create (POST)
   app.post('/api/requests', async (req, res) => {
     const { userId, requesterName, requesterPhone, category, title, description, offeredRate, unitType, workDate, village, district } = req.body;
-
-    if (!requesterName || !requesterPhone || !category || !title || !unitType || !village) {
-      return res.status(400).json({ error: 'Missing required request details' });
-    }
-
     try {
       await dbExec(
-        `INSERT INTO labor_requests 
-        (user_id, requester_name, requester_phone, category, title, description, offered_rate, unit_type, work_date, village, district, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'open')`,
-        [
-          userId || 1,
-          String(requesterName).trim(),
-          String(requesterPhone).trim(),
-          String(category).trim(),
-          String(title).trim(),
-          String(description || '').trim(),
-          Number(offeredRate || 0),
-          String(unitType).trim(),
-          String(workDate || new Date().toISOString().split('T')[0]).trim(),
-          String(village).trim(),
-          String(district || 'Local District').trim()
-        ]
+        `INSERT INTO labor_requests (user_id, requester_name, requester_phone, category, title, description, offered_rate, unit_type, work_date, village, district, status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'open')`,
+        [userId || 1, String(requesterName).trim(), String(requesterPhone).trim(), String(category).trim(), String(title).trim(), String(description || '').trim(), Number(offeredRate || 0), String(unitType).trim(), String(workDate || new Date().toISOString().split('T')[0]).trim(), String(village).trim(), String(district || 'Local').trim()]
       );
-
-      return res.json({ success: true, message: 'Requirement posted successfully!' });
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message || 'Failed to create request' });
-    }
+      return res.json({ success: true });
+    } catch (err: any) { return res.status(500).json({ error: err.message }); }
   });
 
-  // 7. Bookings Create (POST) - Two-Way Resolution Logic
   app.post('/api/bookings', async (req, res) => {
     const { listingId, requestId, requesterPhone, providerPhone, serviceTitle, amount, bookingDate } = req.body;
-
-    if (!requesterPhone || !providerPhone || !serviceTitle || !amount) {
-      return res.status(400).json({ error: 'Missing booking details' });
-    }
-
     try {
       await dbExec(
-        `INSERT INTO bookings 
-        (listing_id, request_id, requester_phone, provider_phone, service_title, amount, status, booking_date)
-        VALUES ($1, $2, $3, $4, $5, $6, 'confirmed', $7)`,
-        [
-          listingId || null,
-          requestId || null,
-          String(requesterPhone),
-          String(providerPhone),
-          String(serviceTitle),
-          Number(amount),
-          String(bookingDate || new Date().toISOString().split('T')[0])
-        ]
+        `INSERT INTO bookings (listing_id, request_id, requester_phone, provider_phone, service_title, amount, status, booking_date) VALUES ($1, $2, $3, $4, $5, $6, 'confirmed', $7)`,
+        [listingId || null, requestId || null, String(requesterPhone), String(providerPhone), String(serviceTitle), Number(amount), String(bookingDate || new Date().toISOString().split('T')[0])]
       );
 
-      // PART 1: Resolve the TARGET ITEM
       if (requestId) {
         const reqExists = await dbQueryOne("SELECT id FROM labor_requests WHERE id = $1", [requestId]);
-        if (reqExists) {
-          await dbExec("UPDATE labor_requests SET status = 'matched' WHERE id = $1", [requestId]);
-        } else {
-          await dbExec(
-            `INSERT INTO labor_requests (id, user_id, requester_name, requester_phone, category, title, offered_rate, unit_type, work_date, village, district, status)
-            VALUES ($1, 1, 'Matched Partner', $2, 'labor', $3, $4, 'day', $5, 'Match', 'Match', 'matched')`,
-            [requestId, String(providerPhone), String(serviceTitle), Number(amount), String(bookingDate || new Date().toISOString().split('T')[0])]
-          );
-        }
+        if (reqExists) await dbExec("UPDATE labor_requests SET status = 'matched' WHERE id = $1", [requestId]);
       }
-
       if (listingId) {
         const listExists = await dbQueryOne("SELECT id FROM equipment_listings WHERE id = $1", [listingId]);
-        if (listExists) {
-          await dbExec("UPDATE equipment_listings SET is_available = 0 WHERE id = $1", [listingId]);
-        } else {
-          await dbExec(
-            `INSERT INTO equipment_listings (id, user_id, owner_name, owner_phone, category, title, rate_per_unit, unit_type, village, district, is_available)
-            VALUES ($1, 1, 'Matched Owner', $2, 'equipment', $3, $4, 'hour', 'Match', 'Match', 0)`,
-            [listingId, String(providerPhone), String(serviceTitle), Number(amount)]
-          );
-        }
+        if (listExists) await dbExec("UPDATE equipment_listings SET is_available = 0 WHERE id = $1", [listingId]);
       }
 
-      // PART 2: Resolve the SOURCE ITEM
-      const cleanRequesterPhone = String(requesterPhone).trim();
-      await dbExec("UPDATE labor_requests SET status = 'matched' WHERE requester_phone = $1 AND status = 'open'", [cleanRequesterPhone]);
-      await dbExec("UPDATE equipment_listings SET is_available = 0 WHERE owner_phone = $1 AND is_available = 1", [cleanRequesterPhone]);
+      await dbExec("UPDATE labor_requests SET status = 'matched' WHERE requester_phone = $1 AND status = 'open'", [String(requesterPhone).trim()]);
+      await dbExec("UPDATE equipment_listings SET is_available = 0 WHERE owner_phone = $1 AND is_available = 1", [String(requesterPhone).trim()]);
 
-      return res.json({ success: true, message: 'Booking confirmed and two-way resolution completed!' });
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message || 'Failed to complete booking' });
-    }
+      return res.json({ success: true });
+    } catch (err: any) { return res.status(500).json({ error: err.message }); }
   });
 
-  // 8. User Bookings (GET)
   app.get('/api/bookings', async (req, res) => {
     const phone = req.query.phone as string;
-    if (!phone) {
-      return res.status(400).json({ error: 'Phone number is required' });
-    }
-
     try {
-      const bookings = await dbQueryAll(
-        `SELECT * FROM bookings WHERE requester_phone = $1 OR provider_phone = $2 ORDER BY id DESC`,
-        [phone, phone]
-      );
-      return res.json(bookings);
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message || 'Failed to fetch bookings' });
-    }
+      return res.json(await dbQueryAll(`SELECT * FROM bookings WHERE requester_phone = $1 OR provider_phone = $2 ORDER BY id DESC`, [phone, phone]));
+    } catch (err: any) { return res.status(500).json({ error: err.message }); }
   });
 
   // ==========================================
   // PROTECTED ADMIN API ROUTES
   // ==========================================
 
-  // Admin Dashboard API 1: Top-Level Metrics
   app.get('/api/admin/metrics', requireAdminApi, async (req, res) => {
     try {
       const activeEq = await dbQueryOne("SELECT COUNT(*) as cnt FROM equipment_listings WHERE is_available = 1");
-      const activeEquipmentCount = Number(activeEq?.cnt || 0);
-
       const activeReq = await dbQueryOne("SELECT COUNT(*) as cnt FROM labor_requests WHERE status = 'open'");
-      const activeRequestsCount = Number(activeReq?.cnt || 0);
-      
-      const totalActiveListings = activeEquipmentCount + activeRequestsCount;
-
       const resolvedEq = await dbQueryOne("SELECT COUNT(*) as cnt FROM equipment_listings WHERE is_available = 0");
-      const resolvedEquipmentCount = Number(resolvedEq?.cnt || 0);
-
       const resolvedReq = await dbQueryOne("SELECT COUNT(*) as cnt FROM labor_requests WHERE status != 'open'");
-      const resolvedRequestsCount = Number(resolvedReq?.cnt || 0);
-      
-      const totalResolvedRequests = resolvedEquipmentCount + resolvedRequestsCount;
-
       const usersRes = await dbQueryOne("SELECT COUNT(*) as cnt FROM users");
-      const totalUsers = Number(usersRes?.cnt || 0);
 
       return res.json({
-        totalActiveListings,
-        totalResolvedRequests,
-        totalUsers,
+        totalActiveListings: Number(activeEq?.cnt || 0) + Number(activeReq?.cnt || 0),
+        totalResolvedRequests: Number(resolvedEq?.cnt || 0) + Number(resolvedReq?.cnt || 0),
+        totalUsers: Number(usersRes?.cnt || 0),
       });
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message || 'Failed to fetch admin metrics' });
-    }
+    } catch (err: any) { return res.status(500).json({ error: err.message }); }
   });
 
-  // Admin Dashboard API 2: All Listings List
   app.get('/api/admin/listings', requireAdminApi, async (req, res) => {
     try {
       const equipmentRows = await dbQueryAll("SELECT * FROM equipment_listings ORDER BY id DESC");
@@ -832,67 +639,32 @@ async function startServer() {
 
       const combined = [
         ...equipmentRows.map(row => ({
-          id: `equipment-${row.id}`,
-          rawId: row.id,
-          kind: 'equipment',
-          type: 'Have',
-          title: row.title,
-          category: row.category,
-          ownerName: row.owner_name,
-          ownerPhone: row.owner_phone,
-          village: row.village,
-          district: row.district || 'Local District',
-          rate: row.rate_per_unit,
-          unitType: row.unit_type,
-          status: row.is_available === 1 ? 'Open' : 'Resolved',
-          createdAt: row.created_at || new Date().toISOString()
+          id: `equipment-${row.id}`, rawId: row.id, kind: 'equipment', type: 'Have',
+          title: row.title, category: row.category, ownerName: row.owner_name, ownerPhone: row.owner_phone,
+          village: row.village, district: row.district || 'Local', rate: row.rate_per_unit, unitType: row.unit_type,
+          status: row.is_available === 1 ? 'Open' : 'Resolved', createdAt: row.created_at
         })),
         ...requestRows.map(row => ({
-          id: `request-${row.id}`,
-          rawId: row.id,
-          kind: 'request',
-          type: 'Need',
-          title: row.title,
-          category: row.category,
-          ownerName: row.requester_name,
-          ownerPhone: row.requester_phone,
-          village: row.village,
-          district: row.district || 'Local District',
-          rate: row.offered_rate,
-          unitType: row.unit_type,
-          status: row.status === 'open' ? 'Open' : 'Resolved',
-          createdAt: row.created_at || new Date().toISOString()
+          id: `request-${row.id}`, rawId: row.id, kind: 'request', type: 'Need',
+          title: row.title, category: row.category, ownerName: row.requester_name, ownerPhone: row.requester_phone,
+          village: row.village, district: row.district || 'Local', rate: row.offered_rate, unitType: row.unit_type,
+          status: row.status === 'open' ? 'Open' : 'Resolved', createdAt: row.created_at
         }))
       ];
-
       return res.json(combined);
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message || 'Failed to fetch admin listings' });
-    }
+    } catch (err: any) { return res.status(500).json({ error: err.message }); }
   });
 
-  // Admin Dashboard API 3: Toggle Status between 'Open' and 'Resolved'
   app.post('/api/admin/listings/toggle-status', requireAdminApi, async (req, res) => {
     const { kind, id, status } = req.body;
-    if (!kind || !id || !status) {
-      return res.status(400).json({ error: 'Missing required parameters: kind, id, status' });
-    }
-
     try {
       if (kind === 'equipment') {
-        const isAvailable = status === 'Open' ? 1 : 0;
-        await dbExec("UPDATE equipment_listings SET is_available = $1 WHERE id = $2", [isAvailable, id]);
+        await dbExec("UPDATE equipment_listings SET is_available = $1 WHERE id = $2", [status === 'Open' ? 1 : 0, id]);
       } else if (kind === 'request') {
-        const reqStatus = status === 'Open' ? 'open' : 'Resolved';
-        await dbExec("UPDATE labor_requests SET status = $1 WHERE id = $2", [reqStatus, id]);
-      } else {
-        return res.status(400).json({ error: 'Invalid listing kind' });
+        await dbExec("UPDATE labor_requests SET status = $1 WHERE id = $2", [status === 'Open' ? 'open' : 'Resolved', id]);
       }
-
-      return res.json({ success: true, message: `Listing status updated to ${status}` });
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message || 'Failed to update status' });
-    }
+      return res.json({ success: true });
+    } catch (err: any) { return res.status(500).json({ error: err.message }); }
   });
 
   // ==========================================
@@ -901,40 +673,12 @@ async function startServer() {
   
   app.post('/api/match', async (req, res) => {
     const listing = req.body;
-    if (!listing || !listing.type || !listing.title) {
-      return res.status(400).json({ error: 'Listing payload must contain type ("Need" or "Have") and title' });
-    }
-
     try {
       const pythonApiUrl = process.env.PYTHON_API_URL || 'http://127.0.0.1:8000/match';
-      
-      const response = await fetch(pythonApiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(listing)
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Python API failed: ${errorText}`);
-      }
-
-      const result = await response.json();
-      return res.json(result);
-    } catch (err: any) {
-      console.error('Python ML matcher failed:', err.message);
-      return res.status(500).json({ error: 'ML matching failed', details: err.message });
-    }
-  });
-
-  // ==========================================
-  // EXPLICIT ADMIN SPA ROUTE PROTECTOR
-  // ==========================================
-
-  // Catch direct browser visits to /admin or /admin/* before SPA static files intercept it
-  app.get(['/admin', '/admin/*'], requireAdminPage, (req, res, next) => {
-    // If authenticated, let static file or SPA handler serve index.html
-    next();
+      const response = await fetch(pythonApiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(listing) });
+      if (!response.ok) throw new Error(await response.text());
+      return res.json(await response.json());
+    } catch (err: any) { return res.status(500).json({ error: 'ML matching failed', details: err.message }); }
   });
 
   // ==========================================
@@ -942,10 +686,7 @@ async function startServer() {
   // ==========================================
   
   if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
+    const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' });
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
@@ -955,9 +696,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`KisanConnect full-stack server running on http://0.0.0.0:${PORT}`);
-  });
+  app.listen(PORT, '0.0.0.0', () => console.log(`KisanConnect server running on port ${PORT}`));
 }
 
 startServer();
